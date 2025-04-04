@@ -1,0 +1,170 @@
+# Generate Golang code templates with separation of concerns
+
+Create the following files for a "quiz" with proper separation of concerns:
+# warning , do not write code that has any function , just empty templates 
+
+1. CONTROLLER LAYER (`<module>_controller.go`):
+   - Interface definition
+   - Struct with dependencies (Gin, Handler)
+   - Constructor function
+   - Endpoint registration method
+
+2. HANDLER LAYER (`<module>_handler.go`):
+   - Interface with method signatures
+   - Struct with service dependency
+   - Constructor function
+   - Request handling with validation and service calls
+
+3. SERVICE LAYER (`<module>_service.go`):
+   - Interface defining business logic methods
+   - Struct with repository dependency
+   - Constructor function
+   - Business logic implementation
+
+4. REPOSITORY LAYER (`<module>_repo.go`):
+   - Interface for data operations
+   - Struct with MongoDB dependency
+   - Constructor function
+   - MongoDB operation methods
+
+Follow the structure shown in the example files below.
+
+---EXAMPLES---
+
+# Controller Example:
+```go
+package controller
+
+import (
+	"app/configs"
+	handler "app/handlers"
+	"github.com/gin-gonic/gin"
+)
+
+type IAuthController struct {}
+
+type AuthController struct {
+	Gin         *gin.Engine
+	AuthHandler handler.IAuthHandler
+}
+
+func NewAuthController(a handler.IAuthHandler, ginInsntance *gin.Engine) *AuthController {
+	return &AuthController{
+		Gin:         ginInsntance,
+		AuthHandler: a,
+	}
+}
+
+func (a *AuthController) AuthEndpoints() {
+	a.Gin.GET(configs.API("auth"), a.AuthHandler.GoogleSSOHandler)
+}. package handler
+
+import (
+	"app/configs"
+	"app/services"
+	"app/types"
+	"github.com/gin-gonic/gin"
+)
+
+type IAuthHandler interface {
+	GoogleSSOHandler(g *gin.Context)
+}
+
+type AuthHandler struct {
+	AuthServ services.IAuthService
+}
+
+func NewAuthHandler(x services.IAuthService) *AuthHandler {
+	return &AuthHandler{
+		AuthServ: x,
+	}
+}
+
+func (a *AuthHandler) GoogleSSOHandler(g *gin.Context) {
+	code := g.Query("code")
+	if code == "" {
+		errJson := types.NewHttpResponse(configs.Oops, "code_missing", 400, nil)
+		g.JSON(errJson.Status, errJson)
+		return
+	}
+	res := a.AuthServ.GoogleSSO(code)
+	g.JSON(res.Status, res)
+}, package services
+
+import (
+	"app/configs"
+	"app/logger"
+	repo "app/repos"
+	"app/types"
+	"net/http"
+)
+
+type IAuthService interface {
+	AuthUser() types.HttpResponseType
+	GoogleSSO(code string) types.HttpResponseType
+}
+
+type AuthService struct {
+	repo repo.IUserRepo
+}
+
+func NewAuthService(u repo.IUserRepo) *AuthService {
+	return &AuthService{
+		repo: u,
+	}
+}
+
+func (a *AuthService) AuthUser() types.HttpResponseType {
+	log := logger.New()
+	err, _ := a.repo.LoginUser()
+	if err != nil {
+		log.Error(err.Error())
+		return types.NewHttpResponse(
+			configs.PleaseTryLater,
+			"error-repo-auth",
+			400,
+			nil,
+		)
+	}
+	return types.NewHttpResponse(configs.WelcomeBack, configs.Null, http.StatusOK, nil)
+}, package repo
+
+import (
+	"app/types"
+	"fmt"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
+)
+
+const (
+	ACCOUNT_COLLECTION = "account"
+)
+
+type IUserRepo interface {
+	LoginUser() (error, map[string]string)
+	FindUser(email string) (*types.UserType, error)
+	CreateUser(d types.UserRequestType) (string, error)
+}
+
+type MongoUser struct {
+	dataBase *Mongo
+}
+
+func NewMongoUser(mongo *Mongo) *MongoUser {
+	return &MongoUser{
+		dataBase: mongo,
+	}
+}
+
+func (m *MongoUser) FindUser(email string) (*types.UserType, error) {
+	ctx, ctn := NewCTX()
+	defer ctn()
+	var UserBase types.UserType
+	if err := m.dataBase.fromCollection(ACCOUNT_COLLECTION).FindOne(ctx, bson.M{"email": email}).Decode(&UserBase); err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &UserBase, nil
+}
